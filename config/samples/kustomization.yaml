@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- cdayz.k8s.extensions_v1_prepullimage.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples
