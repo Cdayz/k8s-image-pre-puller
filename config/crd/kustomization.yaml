@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/cdayz.k8s.extensions.cdayz.k8s.extensions_prepullimages.yaml
+- bases/images.cdayz.k8s.extensions_prepullimages.yaml
 #+kubebuilder:scaffold:crdkustomizeresource
 
 patches:

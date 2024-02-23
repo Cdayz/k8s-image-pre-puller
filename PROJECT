@@ -4,7 +4,17 @@
 # More info: https://book.kubebuilder.io/reference/project-config.html
 domain: cdayz.k8s.extensions
 layout:
-  - go.kubebuilder.io/v4
+- go.kubebuilder.io/v4
 projectName: k8s-image-pre-puller
 repo: github.com/Cdayz/k8s-image-pre-puller
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: cdayz.k8s.extensions
+  group: images
+  kind: PrePullImage
+  path: github.com/Cdayz/k8s-image-pre-puller/api/v1
+  version: v1
 version: "3"
