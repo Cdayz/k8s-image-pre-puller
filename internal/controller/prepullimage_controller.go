@@ -236,12 +236,10 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 }
 
 func (r *PrePullImageReconciler) ensurePrePullContainerInDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	hasImageInSet := slices.ContainsFunc(
-		daemonSet.Spec.Template.Spec.InitContainers,
-		func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
-	)
-	if hasImageInSet {
-		return daemonSet, nil
+	for _, ctr := range daemonSet.Spec.Template.Spec.InitContainers {
+		if ctr.Image == prePullImage.Spec.Image {
+			return daemonSet, nil
+		}
 	}
 
 	daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
