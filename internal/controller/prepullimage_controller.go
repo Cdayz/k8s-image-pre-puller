@@ -219,7 +219,7 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 				Spec: corev1.PodSpec{
 					InitContainers:   []corev1.Container{r.createPrePullContainer(prePullImage)},
 					Containers:       []corev1.Container{r.createMainContainer()},
-					RestartPolicy:    corev1.RestartPolicyOnFailure,
+					RestartPolicy:    corev1.RestartPolicyAlways,
 					NodeSelector:     prePullImage.Spec.NodeSelector,
 					ImagePullSecrets: imagePullSecrets,
 					Tolerations:      tolerations,

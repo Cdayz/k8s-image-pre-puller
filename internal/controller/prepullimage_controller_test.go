@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -51,7 +52,10 @@ var _ = Describe("PrePullImage Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: imagesv1.PrePullImageSpec{
+						Image:        "test-image",
+						NodeSelector: map[string]string{},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
@@ -71,6 +75,21 @@ var _ = Describe("PrePullImage Controller", func() {
 			controllerReconciler := &PrePullImageReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
+
+				Config: PrePullImageReconcilerConfig{
+					MainContainer: ContainerConfig{
+						Name:    "main",
+						Image:   "busybox",
+						Command: []string{"/bin/sh"},
+						Args:    []string{"-c", "'sleep inf'"},
+					},
+					PrePullContainer: ContainerConfig{
+						Command:   []string{"/bin/sh"},
+						Args:      []string{"-c", "'exit 0'"},
+						Resources: corev1.ResourceRequirements{},
+					},
+					ImagePullSecretNames: []string{"artifactory-cred-secret"},
+				},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
