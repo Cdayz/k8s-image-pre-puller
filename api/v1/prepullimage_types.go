@@ -17,7 +17,6 @@ limitations under the License.
 package v1
 
 import (
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,8 +39,6 @@ type PrePullImageStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	// DaemonSetRef is reference to daemonSet which used to pull image
-	DaemonSetRef *corev1.ObjectReference `json:"daemonSetRef"`
 }
 
 //+kubebuilder:object:root=true

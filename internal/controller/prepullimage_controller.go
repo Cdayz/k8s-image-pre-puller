@@ -19,8 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
-	"maps"
 	"slices"
+	"strconv"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
@@ -36,14 +36,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	imagesv1 "github.com/Cdayz/k8s-image-pre-puller/api/v1"
-	"github.com/Cdayz/k8s-image-pre-puller/internal/random"
+	"github.com/Cdayz/k8s-image-pre-puller/internal/names"
 )
 
 const (
 	DaemonSetLabelPurposeName  = "cdayz.k8s.extensions/purpose"
 	DaemonSetLabelPurposeValue = "images"
 
-	DaemonSetLabelReleaseName = "cdayz.k8s.extensions/release-name"
+	DaemonSetLabelNodeSelectorHash = "cdayz.k8s.extensions/node-selector-hash"
 
 	FinalizerName = "images.cdayz.k8s.extensions/finalizer"
 
@@ -138,13 +138,6 @@ func (r *PrePullImageReconciler) ensurePrePulling(ctx context.Context, prePullIm
 	if err != nil {
 		return fmt.Errorf("get current pre-pulling daemonset: %w", err)
 	}
-
-	if daemonSet == nil {
-		daemonSet, err = r.findBestExistingDaemonSetForPrePulling(ctx, prePullImage)
-		if err != nil {
-			return fmt.Errorf("find best existing daemonset: %w", err)
-		}
-	}
 	if daemonSet == nil {
 		daemonSet, err = r.createDaemonSetForPrePulling(ctx, prePullImage)
 		if err != nil {
@@ -152,53 +145,20 @@ func (r *PrePullImageReconciler) ensurePrePulling(ctx context.Context, prePullIm
 		}
 	}
 
-	hasImageInSet := slices.ContainsFunc(
-		daemonSet.Spec.Template.Spec.InitContainers,
-		func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
-	)
-	if !hasImageInSet {
-		daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
-		if err := r.Update(ctx, daemonSet); err != nil {
-			return fmt.Errorf("add init-container with pre-puller to daemonset: %w", err)
-		}
-	}
-
-	tolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
+	daemonSet, err = r.ensurePrePullContainerInDaemonSet(ctx, daemonSet, prePullImage)
 	if err != nil {
-		return fmt.Errorf("list tolerations by node selector: %w", err)
-	}
-	if !slices.Equal(daemonSet.Spec.Template.Spec.Tolerations, tolerations) {
-		daemonSet.Spec.Template.Spec.Tolerations = tolerations
-		if err := r.Update(ctx, daemonSet); err != nil {
-			return fmt.Errorf("update tolerations of daemonset: %w", err)
-		}
+		return fmt.Errorf("ensure pre–pull container in daemonset: %w", err)
 	}
 
-	prePullImage.Status.DaemonSetRef = &corev1.ObjectReference{
-		Kind:            daemonSet.Kind,
-		APIVersion:      daemonSet.APIVersion,
-		Namespace:       daemonSet.GetNamespace(),
-		Name:            daemonSet.GetName(),
-		UID:             daemonSet.GetUID(),
-		ResourceVersion: daemonSet.GetResourceVersion(),
-	}
-
-	if err := r.Status().Update(ctx, prePullImage); err != nil {
-		return fmt.Errorf("update status of pre-pull: %w", err)
+	if _, err := r.ensureDaemonsetHasProperTolerations(ctx, daemonSet, prePullImage); err != nil {
+		return fmt.Errorf("ensure pre-pull daemonset has proper tolerations: %w", err)
 	}
 
 	return nil
 }
 
 func (r *PrePullImageReconciler) getCurrentPrePullingDaemonset(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	if prePullImage.Status.DaemonSetRef == nil {
-		return nil, nil
-	}
-
-	key := client.ObjectKey{
-		Namespace: prePullImage.Status.DaemonSetRef.Namespace,
-		Name:      prePullImage.Status.DaemonSetRef.Name,
-	}
+	key := client.ObjectKey{Namespace: prePullImage.Namespace, Name: r.makeDaemonSetName(prePullImage)}
 	daemonSet := &appsv1.DaemonSet{}
 	if err := r.Get(ctx, key, daemonSet); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -210,29 +170,10 @@ func (r *PrePullImageReconciler) getCurrentPrePullingDaemonset(ctx context.Conte
 	return daemonSet, nil
 }
 
-func (r *PrePullImageReconciler) findBestExistingDaemonSetForPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	matchingLabels := client.MatchingLabelsSelector{
-		Selector: labels.SelectorFromSet(labels.Set{DaemonSetLabelPurposeName: DaemonSetLabelPurposeValue}),
-	}
-
-	var daemonSets appsv1.DaemonSetList
-	if err := r.List(ctx, &daemonSets, client.InNamespace(prePullImage.Namespace), matchingLabels); err != nil {
-		return nil, fmt.Errorf("unable to list daemonsets: %w", err)
-	}
-
-	for _, item := range daemonSets.Items {
-		if maps.Equal(item.Spec.Template.Spec.NodeSelector, prePullImage.Spec.NodeSelector) {
-			return &item, nil
-		}
-	}
-
-	return nil, nil
-}
-
 func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
 	labels := map[string]string{
-		DaemonSetLabelReleaseName: random.RandStringRunes(32),
-		DaemonSetLabelPurposeName: DaemonSetLabelPurposeValue,
+		DaemonSetLabelNodeSelectorHash: r.nodeSelectorHash(prePullImage),
+		DaemonSetLabelPurposeName:      DaemonSetLabelPurposeValue,
 	}
 
 	tolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
@@ -242,9 +183,9 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 
 	daemonSet := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: DaemonSetNamePrefix,
-			Namespace:    prePullImage.Namespace,
-			Labels:       labels,
+			Name:      r.makeDaemonSetName(prePullImage),
+			Namespace: prePullImage.Namespace,
+			Labels:    labels,
 		},
 		Spec: appsv1.DaemonSetSpec{
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -272,6 +213,42 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 
 	if err := r.Create(ctx, daemonSet); err != nil {
 		return nil, fmt.Errorf("create daemonset: %w", err)
+	}
+
+	return daemonSet, nil
+}
+
+func (r *PrePullImageReconciler) ensurePrePullContainerInDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+	hasImageInSet := slices.ContainsFunc(
+		daemonSet.Spec.Template.Spec.InitContainers,
+		func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
+	)
+	if hasImageInSet {
+		return daemonSet, nil
+	}
+
+	daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
+	if err := r.Update(ctx, daemonSet); err != nil {
+		return nil, fmt.Errorf("add init-container with pre-puller to daemonset: %w", err)
+	}
+
+	return daemonSet, nil
+}
+
+func (r *PrePullImageReconciler) ensureDaemonsetHasProperTolerations(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+	tolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
+	if err != nil {
+		return nil, fmt.Errorf("list tolerations by node selector: %w", err)
+	}
+
+	tolerationsAreEqual := slices.Equal(daemonSet.Spec.Template.Spec.Tolerations, tolerations)
+	if tolerationsAreEqual {
+		return daemonSet, nil
+	}
+
+	daemonSet.Spec.Template.Spec.Tolerations = tolerations
+	if err := r.Update(ctx, daemonSet); err != nil {
+		return nil, fmt.Errorf("update tolerations of daemonset: %w", err)
 	}
 
 	return daemonSet, nil
@@ -331,7 +308,17 @@ func (r *PrePullImageReconciler) createMainContainer() corev1.Container {
 }
 
 func (r *PrePullImageReconciler) makePrePullContainerName(prePullImage *imagesv1.PrePullImage) string {
-	return fmt.Sprintf("pre-pull-") // TODO: make normal name
+	imageHashStr := names.StringHash(prePullImage.Spec.Image)
+	return fmt.Sprintf("pre-pull-%d", imageHashStr)
+}
+
+func (r *PrePullImageReconciler) nodeSelectorHash(prePullImage *imagesv1.PrePullImage) string {
+	return strconv.FormatUint(uint64(names.StringMapHash(prePullImage.Spec.NodeSelector)), 10)
+}
+
+func (r *PrePullImageReconciler) makeDaemonSetName(prePullImage *imagesv1.PrePullImage) string {
+	nodeSelectorHashStr := r.nodeSelectorHash(prePullImage)
+	return names.MakeK8SName([]string{DaemonSetNamePrefix, nodeSelectorHashStr}, names.IncludeCRC(true), names.MaxLength(63))
 }
 
 // SetupWithManager sets up the controller with the Manager.
