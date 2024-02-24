@@ -32,23 +32,7 @@ type PrePullImageSpec struct {
 	// Image which should be pulled on nodes
 	Image string `json:"image"`
 	// NodeSelector for selecting only particular nodes where image should be pre-pulled
-	NodeSelector corev1.NodeSelector `json:"nodeSelector"`
-}
-
-type PrePullImageState string
-
-const (
-	Pending PrePullImageState = "Pending"
-	Pulling PrePullImageState = "Pulling"
-	Ready   PrePullImageState = "Ready"
-)
-
-type PrePullImageStateOnNode struct {
-	// NodeRef is reference to node where image should be pre-pulled
-	NodeRef corev1.ObjectReference `json:"nodeRef"`
-	// State is state of image on node
-	// +kubebuilder:validation:Enum=Pending;Pulling;Ready
-	State PrePullImageState `json:"state"`
+	NodeSelector map[string]string `json:"nodeSelector"`
 }
 
 // PrePullImageStatus defines the observed state of PrePullImage
@@ -57,9 +41,7 @@ type PrePullImageStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 
 	// DaemonSetRef is reference to daemonSet which used to pull image
-	DaemonSetRef corev1.ObjectReference `json:"daemonSetRef"`
-	// PerNodeState is list of states of image per node
-	PerNodeState []PrePullImageStateOnNode `json:"perNodeState"`
+	DaemonSetRef *corev1.ObjectReference `json:"daemonSetRef"`
 }
 
 //+kubebuilder:object:root=true
