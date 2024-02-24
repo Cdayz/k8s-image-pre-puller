@@ -49,18 +49,30 @@ const (
 
 	PodNamePrefix       = "image-pre-puller-"
 	DaemonSetNamePrefix = "image-pre-puller-"
-
-	MainContainerName = "main"
 )
 
-var (
-	MaxUnavailablePodsOfDaemonSetDuringRollingUpdate = intstr.FromString("100%")
-)
+var MaxUnavailablePodsOfDaemonSetDuringRollingUpdate = intstr.FromString("100%")
+
+type ContainerConfig struct {
+	Name      string
+	Image     string
+	Command   []string
+	Args      []string
+	Resources corev1.ResourceRequirements
+}
+
+type PrePullImageReconcilerConfig struct {
+	MainContainer        ContainerConfig
+	PrePullContainer     ContainerConfig
+	ImagePullSecretNames []string
+}
 
 // PrePullImageReconciler reconciles a PrePullImage object
 type PrePullImageReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	Config PrePullImageReconcilerConfig
 }
 
 //+kubebuilder:rbac:groups=images.cdayz.k8s.extensions,resources=prepullimages,verbs=get;list;watch;create;update;patch;delete
@@ -176,6 +188,11 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 		DaemonSetLabelPurposeName:      DaemonSetLabelPurposeValue,
 	}
 
+	imagePullSecrets := []corev1.LocalObjectReference{}
+	for _, secretName := range r.Config.ImagePullSecretNames {
+		imagePullSecrets = append(imagePullSecrets, corev1.LocalObjectReference{Name: secretName})
+	}
+
 	tolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
 	if err != nil {
 		return nil, fmt.Errorf("get tolerations for pre-pull: %w", err)
@@ -204,7 +221,7 @@ func (r *PrePullImageReconciler) createDaemonSetForPrePulling(ctx context.Contex
 					Containers:       []corev1.Container{r.createMainContainer()},
 					RestartPolicy:    corev1.RestartPolicyOnFailure,
 					NodeSelector:     prePullImage.Spec.NodeSelector,
-					ImagePullSecrets: []corev1.LocalObjectReference{}, // TODO
+					ImagePullSecrets: imagePullSecrets,
 					Tolerations:      tolerations,
 				},
 			},
@@ -236,17 +253,39 @@ func (r *PrePullImageReconciler) ensurePrePullContainerInDaemonSet(ctx context.C
 }
 
 func (r *PrePullImageReconciler) ensureDaemonsetHasProperTolerations(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	tolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
+	requiredTolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
 	if err != nil {
 		return nil, fmt.Errorf("list tolerations by node selector: %w", err)
 	}
 
-	tolerationsAreEqual := slices.Equal(daemonSet.Spec.Template.Spec.Tolerations, tolerations)
-	if tolerationsAreEqual {
+	daemoSetTolerations := daemonSet.Spec.Template.Spec.Tolerations
+	daemoSetTolerationsLookup := map[string][]corev1.Toleration{}
+	for _, tol := range daemoSetTolerations {
+		if _, ok := daemoSetTolerationsLookup[tol.Key]; !ok {
+			daemoSetTolerationsLookup[tol.Key] = []corev1.Toleration{}
+		}
+		daemoSetTolerationsLookup[tol.Key] = append(daemoSetTolerationsLookup[tol.Key], tol)
+	}
+
+	tolerationsToAdd := []corev1.Toleration{}
+	for _, toleration := range requiredTolerations {
+		has := false
+		for _, item := range daemoSetTolerationsLookup[toleration.Key] {
+			if item == toleration {
+				has = true
+				break
+			}
+		}
+		if !has {
+			tolerationsToAdd = append(tolerationsToAdd, toleration)
+		}
+	}
+
+	if len(tolerationsToAdd) == 0 {
 		return daemonSet, nil
 	}
 
-	daemonSet.Spec.Template.Spec.Tolerations = tolerations
+	daemonSet.Spec.Template.Spec.Tolerations = append(daemonSet.Spec.Template.Spec.Tolerations, tolerationsToAdd...)
 	if err := r.Update(ctx, daemonSet); err != nil {
 		return nil, fmt.Errorf("update tolerations of daemonset: %w", err)
 	}
@@ -265,13 +304,16 @@ func (r *PrePullImageReconciler) getTolerationsByNodeSelector(ctx context.Contex
 	tolerationMap := map[string]corev1.Toleration{}
 	for _, item := range nodes.Items {
 		for _, taint := range item.Spec.Taints {
-			key := fmt.Sprintf("%s:%s", taint.Key, taint.Effect)
+			key := taint.ToString()
 
 			if _, ok := tolerationMap[key]; !ok {
-
+				operator := corev1.TolerationOpExists
+				if taint.Value != "" {
+					operator = corev1.TolerationOpEqual
+				}
 				tolerationMap[key] = corev1.Toleration{
-					Key:      key,
-					Operator: corev1.TolerationOpExists,
+					Key:      taint.Key,
+					Operator: operator,
 					Value:    taint.Value,
 					Effect:   taint.Effect,
 				}
@@ -291,19 +333,19 @@ func (r *PrePullImageReconciler) createPrePullContainer(prePullImage *imagesv1.P
 	return corev1.Container{
 		Name:      r.makePrePullContainerName(prePullImage),
 		Image:     prePullImage.Spec.Image,
-		Command:   []string{},                    // TODO
-		Args:      []string{},                    // TODO
-		Resources: corev1.ResourceRequirements{}, // TODO
+		Command:   r.Config.PrePullContainer.Command,
+		Args:      r.Config.PrePullContainer.Args,
+		Resources: r.Config.PrePullContainer.Resources,
 	}
 }
 
 func (r *PrePullImageReconciler) createMainContainer() corev1.Container {
 	return corev1.Container{
-		Name:      MainContainerName,
-		Image:     "",         // TODO
-		Command:   []string{}, // TODO
-		Args:      []string{}, // TODO
-		Resources: corev1.ResourceRequirements{},
+		Name:      r.Config.MainContainer.Name,
+		Image:     r.Config.MainContainer.Image,
+		Command:   r.Config.MainContainer.Command,
+		Args:      r.Config.MainContainer.Args,
+		Resources: r.Config.MainContainer.Resources,
 	}
 }
 
