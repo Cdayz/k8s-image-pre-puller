@@ -1,5 +1,7 @@
 FROM golang:1.21 AS builder
 
+LABEL org.opencontainers.image.source="https://github.com/Cdayz/k8s-image-pre-puller"
+
 WORKDIR /workspace
 
 COPY go.mod go.mod
