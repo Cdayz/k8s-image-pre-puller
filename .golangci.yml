@@ -1,40 +1,155 @@
-run:
-  deadline: 5m
-  allow-parallel-runners: true
-
-issues:
-  # don't skip warning about doc comments
-  # don't exclude the default set of lint
-  exclude-use-default: false
-  # restore some of the defaults
-  # (fill in the rest as needed)
-  exclude-rules:
-    - path: "api/*"
-      linters:
-        - lll
-    - path: "internal/*"
-      linters:
-        - dupl
-        - lll
 linters:
-  disable-all: true
   enable:
-    - dupl
-    - errcheck
-    - exportloopref
-    - goconst
-    - gocyclo
-    - gofmt
-    - goimports
-    - gosimple
-    - govet
-    - ineffassign
-    - lll
-    - misspell
-    - nakedret
-    - prealloc
-    - staticcheck
-    - typecheck
-    - unconvert
-    - unparam
-    - unused
+    - typecheck # like the front-end of a Go compiler, parses and type-checks Go code
+    - unused # checks for unused constants, variables, functions and types
+    - errcheck # checking for unchecked errors, these unchecked errors can be critical bugs in some cases
+    - exportloopref # checks for pointers to enclosing loop variables
+    - gosimple # specializes in simplifying a code
+    - ineffassign # detects when assignments to existing variables are not used
+    - staticcheck # is a go vet on steroids, applying a ton of static analysis checks
+    - revive # fast, configurable, extensible, flexible, and beautiful linter for Go, drop-in replacement of golint
+    - asciicheck # Simple linter to check that your code does not contain non-ASCII identifiers.
+    - bidichk # checks for dangerous unicode character sequences
+    - exhaustive # checks exhaustiveness of enum switch statements
+    - gomodguard # allow and block lists linter for direct Go module dependencies. This is different from depguard where there are different block types for example version constraints and module recommendations
+    - errorlint # finds code that will cause problems with the error wrapping scheme introduced in Go 1.13
+    - nilerr # Finds the code that returns nil even if it checks that the error is not nil.
+    - nolintlint # Reports ill-formed or insufficient nolint directives.
+    - zerologlint # Detects the wrong usage of zerolog that a user forgets to dispatch with Send or Msg.
+    - gofumpt # Gofumpt checks whether code was gofumpt-ed.
+    - gci # Gci controls Go package import order and makes it always deterministic.
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  exhaustive:
+    # Program elements to check for exhaustiveness.
+    # Default: [ switch ]
+    check:
+      - switch
+      - map
+    default-signifies-exhaustive: true
+    explicit-exhaustive-map: true
+  gomodguard:
+    blocked:
+      # List of blocked modules.
+      modules:
+        - github.com/golang/protobuf:
+            recommendations:
+              - google.golang.org/protobuf
+            reason: "see https://developers.google.com/protocol-buffers/docs/reference/go/faq#modules"
+        - github.com/satori/go.uuid:
+            recommendations:
+              - github.com/google/uuid
+            reason: "satori's package is not maintained"
+        - github.com/gofrs/uuid:
+            recommendations:
+              - github.com/google/uuid
+            reason: "gofrs' package is not go module"
+        - github.com/pkg/errors:
+            recommendations:
+              - errors
+              - fmt
+            reason: "Should be replaced by standard lib errors package"
+  nolintlint:
+    # Exclude following linters from requiring an explanation.
+    # Default: []
+    allow-no-explanation: [ funlen, gocognit, lll ]
+    # Enable to require an explanation of nonzero length after each nolint directive.
+    # Default: false
+    require-explanation: true
+    # Enable to require nolint directives to mention the specific linter being suppressed.
+    # Default: false
+    require-specific: false
+  gofumpt:
+    # Choose whether to use the extra rules.
+    # Default: false
+    extra-rules: true
+  gci:
+    # Enable custom order of sections.
+    # If `true`, make the section order the same as the order of `sections`.
+    # Default: false
+    custom-order: true
+    # Section configuration to compare against.
+    # Section names are case-insensitive and may contain parameters in ().
+    # The default order of sections is `standard > default > custom > blank > dot`,
+    # If `custom-order` is `true`, it follows the order of `sections` option.
+    # Default: ["standard", "default"]
+    sections:
+      - standard # Standard section: captures all standard packages.
+      - default # Default section: contains all imports that could not be matched to another section type.
+      - prefix(github.com/Cdayz)
+      - blank # Blank section: contains all blank imports. This section is not present unless explicitly enabled.
+      - dot # Dot section: contains all dot imports. This section is not present unless explicitly enabled.
+  revive:
+    ignore-generated-header: true
+    # https://github.com/mgechev/revive#recommended-configuration
+    rules:
+      - name: atomic
+        disabled: false
+      - name: time-equal
+        disabled: false
+      - name: errorf
+        disabled: false
+      - name: context-as-argument
+        disabled: false
+      - name: context-keys-type
+        disabled: false
+      - name: blank-imports
+        disabled: false
+      - name: dot-imports
+        disabled: false
+      - name: error-return
+        disabled: false
+      - name: error-strings
+        disabled: false
+      - name: if-return
+        disabled: false
+      - name: increment-decrement
+        disabled: false
+      - name: var-declaration
+        disabled: false
+      - name: range
+        disabled: false
+      - name: indent-error-flow
+        disabled: false
+      - name: superfluous-else
+        disabled: false
+      - name: empty-block
+        disabled: false
+      - name: unused-parameter
+        disabled: false
+      - name: defer
+        disabled: false
+run:
+  # Timeout for analysis, e.g. 30s, 5m.
+  # Default: 1m
+  timeout: 5m
+  # Which dirs to skip: issues from them won't be reported.
+  # Can use regexp here: `generated.*`, regexp is applied on full path,
+  # including the path prefix if one is set.
+  # Default value is empty list,
+  # but default dirs are skipped independently of this option's value (see skip-dirs-use-default).
+  # "/" will be replaced by current OS file path separator to properly work on Windows.
+  skip-dirs:
+    - genproto
+  # Which files to skip: they will be analyzed, but issues from them won't be reported.
+  # Default value is empty list,
+  # but there is no need to include all autogenerated files,
+  # we confidently recognize autogenerated files.
+  # If it's not please let us know.
+  # "/" will be replaced by current OS file path separator to properly work on Windows.
+  skip-files:
+    - "_mock.go"
+output:
+  # Sort results by: filepath, line and column.
+  sort-results: true
+issues:
+  # Maximum issues count per one linter.
+  # Set to 0 to disable.
+  # Default: 50
+  max-issues-per-linter: 0
+  # Maximum count of issues with the same text.
+  # Set to 0 to disable.
+  # Default: 3
+  max-same-issues: 0
