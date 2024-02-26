@@ -1,6 +1,6 @@
 # K8S Image Pre Puller
 
-![Tests](https://github.com/Cdayz/k8s-image-pre-puller/actions/workflows/go.yml/badge.svg)![Docker Image](https://github.com/Cdayz/k8s-image-pre-puller/actions/workflows/docker.yml/badge.svg)
+![Tests](https://github.com/Cdayz/k8s-image-pre-puller/actions/workflows/go.yml/badge.svg)
 
 It's a simple kubernetes operator that will help you automatically pre-pull docker images on nodes.
 This operator can be used for speed-up pod initialization in cluster.
