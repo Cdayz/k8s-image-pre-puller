@@ -1,51 +1,44 @@
 package controller
 
 import (
+	"context"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
-	corev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	imclientset "github.com/Cdayz/k8s-image-pre-puller/pkg/client/clientset/versioned"
-	imscheme "github.com/Cdayz/k8s-image-pre-puller/pkg/client/clientset/versioned/scheme"
 	iminformers "github.com/Cdayz/k8s-image-pre-puller/pkg/client/informers/externalversions"
 	imageinformer "github.com/Cdayz/k8s-image-pre-puller/pkg/client/informers/externalversions/images/v1"
 	imagelister "github.com/Cdayz/k8s-image-pre-puller/pkg/client/listers/images/v1"
 )
 
 type PrePullImageController struct {
-	reconcileConfig PrePullImageReconcilerConfig
+	reconcileConfig *PrePullImageReconcilerConfig
 
 	kubeClient kubernetes.Interface
 	imClient   imclientset.Interface
 
-	podInformer          coreinformers.PodInformer
-	prePullImageInformer imageinformer.PrePullImageInformer
-
 	informerFactory   informers.SharedInformerFactory
 	imInformerFactory iminformers.SharedInformerFactory
 
-	podLister corelisters.PodLister
-	podSynced func() bool
+	podInformer coreinformers.PodInformer
+	podLister   corelisters.PodLister
 
-	prePullImageLister imagelister.PrePullImageLister
-	prePullImageSynced func() bool
+	prePullImageInformer imageinformer.PrePullImageInformer
+	prePullImageLister   imagelister.PrePullImageLister
 
 	workers   uint32
 	queueList []workqueue.RateLimitingInterface
-
-	recorder record.EventRecorder
 }
 
 func NewPrePullImageController(
@@ -53,13 +46,8 @@ func NewPrePullImageController(
 	imClient imclientset.Interface,
 	informerFactory informers.SharedInformerFactory,
 	workers uint32,
-	reconcileConfig PrePullImageReconcilerConfig,
-) (*PrePullImageController, error) {
-	eventBroadcaster := record.NewBroadcaster()
-	eventBroadcaster.StartLogging(klog.Infof)
-	eventBroadcaster.StartRecordingToSink(&corev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
-	recorder := eventBroadcaster.NewRecorder(imscheme.Scheme, v1.EventSource{Component: "vc-controller-manager"})
-
+	reconcileConfig *PrePullImageReconcilerConfig,
+) *PrePullImageController {
 	queueList := make([]workqueue.RateLimitingInterface, workers)
 	for i := uint32(0); i < workers; i++ {
 		queueList[i] = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
@@ -68,11 +56,9 @@ func NewPrePullImageController(
 	factory := iminformers.NewSharedInformerFactory(imClient, 0)
 	prePullImageInformer := factory.Images().V1().PrePullImages()
 	prePullImageLister := prePullImageInformer.Lister()
-	prePullImageSynced := prePullImageInformer.Informer().HasSynced
 
 	podInformer := informerFactory.Core().V1().Pods()
 	podLister := podInformer.Lister()
-	podSynced := podInformer.Informer().HasSynced
 
 	cc := PrePullImageController{
 		reconcileConfig: reconcileConfig,
@@ -85,69 +71,75 @@ func NewPrePullImageController(
 
 		prePullImageInformer: prePullImageInformer,
 		prePullImageLister:   prePullImageLister,
-		prePullImageSynced:   prePullImageSynced,
 
 		podInformer: podInformer,
 		podLister:   podLister,
-		podSynced:   podSynced,
 
 		workers:   workers,
 		queueList: queueList,
-
-		recorder: recorder,
 	}
 
-	cc.prePullImageInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, _ = cc.prePullImageInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    cc.addPrePullImage,
 		UpdateFunc: cc.updatePrePullImage,
 	})
-	podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+	_, _ = podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    cc.addPod,
 		UpdateFunc: cc.updatePod,
 		DeleteFunc: cc.deletePod,
 	})
 
-	return &cc, nil
+	return &cc
 }
 
-// Run start JobController.
-func (cc *PrePullImageController) Run(stopCh <-chan struct{}) {
-	cc.informerFactory.Start(stopCh)
-	cc.imInformerFactory.Start(stopCh)
+// Run start PrePullImageController.
+func (cc *PrePullImageController) Run(ctx context.Context) {
+	cc.informerFactory.Start(ctx.Done())
+	cc.imInformerFactory.Start(ctx.Done())
 
-	for informerType, ok := range cc.informerFactory.WaitForCacheSync(stopCh) {
+	for informerType, ok := range cc.informerFactory.WaitForCacheSync(ctx.Done()) {
 		if !ok {
 			klog.Errorf("caches failed to sync: %v", informerType)
 			return
 		}
 	}
 
-	for informerType, ok := range cc.imInformerFactory.WaitForCacheSync(stopCh) {
+	for informerType, ok := range cc.imInformerFactory.WaitForCacheSync(ctx.Done()) {
 		if !ok {
 			klog.Errorf("caches failed to sync: %v", informerType)
 			return
 		}
 	}
 
-	var i uint32
-	for i = 0; i < cc.workers; i++ {
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		<-ctx.Done()
+		for _, q := range cc.queueList {
+			q.ShutDown()
+		}
+	}()
+
+	for i := uint32(0); i < cc.workers; i++ {
+		wg.Add(1)
 		go func(num uint32) {
-			wait.Until(
-				func() {
-					cc.worker(num)
-				},
-				time.Second,
-				stopCh)
+			defer wg.Done()
+			wait.Until(func() { cc.worker(ctx, num) }, time.Second, ctx.Done())
 		}(i)
 	}
 
 	klog.Infof("PrePullImageController is running ...... ")
+
+	wg.Wait()
 }
 
-func (cc *PrePullImageController) worker(i uint32) {
+func (cc *PrePullImageController) worker(ctx context.Context, i uint32) {
 	klog.Infof("worker %d start ...... ", i)
 
-	for cc.processNextReq(i) {
+	for cc.processNextReq(ctx, i) {
 	}
 }
 
@@ -177,7 +169,7 @@ func (cc *PrePullImageController) getWorkerQueue(key string) workqueue.RateLimit
 	return queue
 }
 
-func (cc *PrePullImageController) processNextReq(count uint32) bool {
+func (cc *PrePullImageController) processNextReq(ctx context.Context, count uint32) bool {
 	queue := cc.queueList[count]
 	obj, shutdown := queue.Get()
 	if shutdown {
@@ -185,20 +177,20 @@ func (cc *PrePullImageController) processNextReq(count uint32) bool {
 		return false
 	}
 
-	req := obj.(ReconcileRequest)
+	req := obj.(ReconcileRequest) //nolint:errcheck // request here SHOULD be this type, if not it's better to panic
 	defer queue.Done(req)
 
 	key := req.Key()
 	if !cc.belongsToThisRoutine(key, count) {
-		klog.Errorf("should not occur The job does not belongs to this routine key:%s, worker:%d...... ", key, count)
+		klog.Errorf("should not occur this PrePullImage does not belongs to this routine key:%s, worker:%d...... ", key, count)
 		queueLocal := cc.getWorkerQueue(key)
 		queueLocal.Add(req)
 		return true
 	}
 
-	klog.V(3).Infof("Try to handle request <%v>", req)
+	klog.V(3).Infof("try to handle request <%v>", req)
 
-	err := stub(req) // TODO: Here should be processing of request
+	_, err := cc.Reconcile(ctx, req)
 	if err != nil {
 		klog.V(2).Infof("Failed to handle PrePullImage<%s/%s>: %v", req.Namespace, req.Name, err)
 		// If any error, requeue it.
@@ -210,8 +202,4 @@ func (cc *PrePullImageController) processNextReq(count uint32) bool {
 	queue.Forget(req)
 
 	return true
-}
-
-func stub(req ReconcileRequest) error {
-	return nil
 }

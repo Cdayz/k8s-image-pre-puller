@@ -14,7 +14,6 @@ linters:
     - gomodguard # allow and block lists linter for direct Go module dependencies. This is different from depguard where there are different block types for example version constraints and module recommendations
     - errorlint # finds code that will cause problems with the error wrapping scheme introduced in Go 1.13
     - nilerr # Finds the code that returns nil even if it checks that the error is not nil.
-    - nilnil # Checks that there is no simultaneous return of nil error and an invalid value.
     - nolintlint # Reports ill-formed or insufficient nolint directives.
     - zerologlint # Detects the wrong usage of zerolog that a user forgets to dispatch with Send or Msg.
     - gofumpt # Gofumpt checks whether code was gofumpt-ed.
@@ -79,7 +78,7 @@ linters-settings:
     sections:
       - standard # Standard section: captures all standard packages.
       - default # Default section: contains all imports that could not be matched to another section type.
-      - prefix(gitlab.tcsbank.ru/ai-platform)
+      - prefix(github.com/Cdayz)
       - blank # Blank section: contains all blank imports. This section is not present unless explicitly enabled.
       - dot # Dot section: contains all dot imports. This section is not present unless explicitly enabled.
   revive:
