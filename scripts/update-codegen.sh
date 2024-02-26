@@ -4,6 +4,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
+GOPATH=$(go env GOPATH)
 SCRIPT_DIR="$(dirname "${BASH_SOURCE[0]}")"
 SCRIPT_ROOT="$(dirname "${SCRIPT_DIR}")"
 GEN_VER=$( awk '/k8s.io\/code-generator/ { print $2 }' "${SCRIPT_ROOT}/go.mod" )
@@ -26,7 +27,7 @@ source "${CODEGEN_PKG}/kube_codegen.sh"
 
 # Create a symlink so that the root of the repo is inside github.com/Cdayz/k8s-image-pre-puller.
 # This is required because the codegen scripts expect it.
-mkdir -p "${SCRIPT_ROOT}/github.com/linkerd"
+mkdir -p "${SCRIPT_ROOT}/github.com/Cdayz"
 ln -s "$(realpath "${SCRIPT_ROOT}")" "${SCRIPT_ROOT}/github.com/Cdayz/k8s-image-pre-puller"
 
 kube::codegen::gen_helpers \
