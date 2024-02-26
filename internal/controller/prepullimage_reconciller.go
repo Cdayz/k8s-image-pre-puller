@@ -85,6 +85,7 @@ func (r *PrePullImageController) removeFromPrePulling(ctx context.Context, prePu
 		return fmt.Errorf("remove image names from daemonset annotations: %w", err)
 	}
 
+	daemonSet.Spec.Template.Annotations = daemonSet.Annotations // WARN: We should have same annotations on pod
 	daemonSet.Spec.Template.Spec.InitContainers = slices.DeleteFunc(
 		daemonSet.Spec.Template.Spec.InitContainers,
 		func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
@@ -221,6 +222,7 @@ func (r *PrePullImageController) ensurePrePullContainerInDaemonSet(ctx context.C
 		return daemonSet, nil
 	}
 
+	daemonSet.Spec.Template.Annotations = daemonSet.Annotations // WARN: We should have same annotations on pod
 	daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
 	daemonSet, err = r.kubeClient.AppsV1().DaemonSets(daemonSet.Namespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
 	if err != nil {
