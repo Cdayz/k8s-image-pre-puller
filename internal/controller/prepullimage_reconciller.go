@@ -122,8 +122,13 @@ func (r *PrePullImageController) ensurePrePulling(ctx context.Context, prePullIm
 		return fmt.Errorf("ensure pre–pull container in daemonset: %w", err)
 	}
 
-	if _, err := r.ensureDaemonsetHasProperTolerations(ctx, daemonSet, prePullImage); err != nil {
+	daemonSet, err = r.ensureDaemonsetHasProperTolerations(ctx, daemonSet, prePullImage)
+	if err != nil {
 		return fmt.Errorf("ensure pre-pull daemonset has proper tolerations: %w", err)
+	}
+
+	if _, err = r.ensureDaemonsetPrepullOnlyImagesFromAnnotation(ctx, daemonSet); err != nil {
+		return fmt.Errorf("ensure pre-pull daemonset pre-pull only images from its annotations: %w", err)
 	}
 
 	return nil
@@ -205,10 +210,16 @@ func (r *PrePullImageController) createDaemonSetForPrePulling(ctx context.Contex
 }
 
 func (r *PrePullImageController) ensurePrePullContainerInDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	var declaredInSpec bool
+	prePullContainerName := r.makePrePullContainerName(prePullImage)
+
+	var (
+		declaredInSpec   bool
+		specHasSameImage bool
+	)
 	for _, ctr := range daemonSet.Spec.Template.Spec.InitContainers {
-		if ctr.Image == prePullImage.Spec.Image {
+		if ctr.Name == prePullContainerName {
 			declaredInSpec = true
+			specHasSameImage = ctr.Image == prePullImage.Spec.Image
 			break
 		}
 	}
@@ -218,15 +229,59 @@ func (r *PrePullImageController) ensurePrePullContainerInDaemonSet(ctx context.C
 		return nil, fmt.Errorf("add image-name to daemonset annotation: %w", err)
 	}
 
-	if declaredInSpec && !addedToAnnotation {
+	if declaredInSpec && specHasSameImage && !addedToAnnotation {
 		return daemonSet, nil
 	}
 
 	daemonSet.Spec.Template.Annotations = daemonSet.Annotations // WARN: We should have same annotations on pod
-	daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
+
+	indexInSpec := slices.IndexFunc(daemonSet.Spec.Template.Spec.InitContainers, func(ctr corev1.Container) bool {
+		return ctr.Name == prePullContainerName
+	})
+	if indexInSpec == -1 {
+		daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
+	} else {
+		daemonSet.Spec.Template.Spec.InitContainers[indexInSpec].Image = prePullImage.Spec.Image
+	}
+
 	daemonSet, err = r.kubeClient.AppsV1().DaemonSets(daemonSet.Namespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("add init-container with pre-puller to daemonset: %w", err)
+	}
+
+	return daemonSet, nil
+}
+
+func (r *PrePullImageController) ensureDaemonsetPrepullOnlyImagesFromAnnotation(ctx context.Context, daemonSet *appsv1.DaemonSet) (*appsv1.DaemonSet, error) {
+	imageNames, err := GetImageNamesFromAnnotation(daemonSet)
+	if err != nil {
+		return nil, fmt.Errorf("get image names from daemonset annotation: %w", err)
+	}
+
+	prePullContainerNames := map[string]bool{}
+	for _, name := range imageNames {
+		prePullContainerNames[r.makePrePullContainerNameFromString(name)] = true
+	}
+
+	initContainers := []corev1.Container{}
+	hasOrphanedContainers := false
+	for _, ctr := range daemonSet.Spec.Template.Spec.InitContainers {
+		if !prePullContainerNames[ctr.Name] {
+			hasOrphanedContainers = true
+			continue
+		}
+		initContainers = append(initContainers, ctr)
+	}
+
+	if !hasOrphanedContainers {
+		return daemonSet, nil
+	}
+
+	daemonSet.Spec.Template.Spec.InitContainers = initContainers
+
+	daemonSet, err = r.kubeClient.AppsV1().DaemonSets(daemonSet.Namespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("remove orphaned containers from daemonset: %w", err)
 	}
 
 	return daemonSet, nil
@@ -332,7 +387,11 @@ func (r *PrePullImageController) createMainContainer() corev1.Container {
 }
 
 func (r *PrePullImageController) makePrePullContainerName(prePullImage *imagesv1.PrePullImage) string {
-	imageHashStr := names.StringHash(prePullImage.Spec.Image)
+	return r.makePrePullContainerNameFromString(prePullImage.Name)
+}
+
+func (r *PrePullImageController) makePrePullContainerNameFromString(name string) string {
+	imageHashStr := names.StringHash(name)
 	return fmt.Sprintf("pre-pull-%d", imageHashStr)
 }
 
