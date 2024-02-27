@@ -9,7 +9,7 @@ This operator can be used for speed-up pod initialization in cluster.
 
 ### Install
 
-// TODO: Install instructions
+You can install this operator by installing it through [Helm Chart](./charts/k8s-image-pre-puller/)
 
 ### Create PrePullImage
 
