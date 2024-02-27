@@ -1,0 +1,64 @@
+replicas: 2
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 2000m
+    memory: 2048Mi
+
+image:
+  repository: ghcr.io/cdayz/k8s-image-pre-puller
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+
+healtz:
+  port: 8081
+  liveness:
+    path: /alive
+    initial_delay_seconds: 25
+    period_seconds: 5
+    failure_threshold: 5
+  readiness:
+    path: /ready
+    initial_delay_seconds: 25
+    period_seconds: 5
+
+logger:
+  system: k8s-image-pre-puller
+  level: info
+
+metrics:
+  port: 9090
+  path: /metrics
+
+profiling:
+  enabled: false
+  port: 6060
+
+controllerThreads: 10
+pre_pull_image_reconciller:
+  main_container:
+    name: main
+    image: busybox
+    command: ['/bin/sh']
+    args: ['-c', 'sleep inf']
+    resources:
+      limits:
+        cpu: 25m
+        memory: 25Mi
+      requests:
+        cpu: 25m
+        memory: 25Mi
+  pre_pull_container:
+    command: ['/bin/sh']
+    args: ['-c', 'exit 0']
+    resources:
+      limits:
+        cpu: 25m
+        memory: 25Mi
+      requests:
+        cpu: 25m
+        memory: 25Mi

@@ -1,0 +1,78 @@
+apiVersion: "apps/v1"
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-deployment
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/component: k8s-image-pre-puller
+    app.kubernetes.io/version: "{{ .Values.image.tag }}"
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}-app
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        app.kubernetes.io/component: k8s-image-pre-puller
+        app.kubernetes.io/version: "{{ .Values.image.tag }}"
+      labels:
+        app: {{ .Chart.Name }}-app
+        release: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      automountServiceAccountToken: true
+      securityContext:
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+      {{ if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $i, $val := .Values.imagePullSecrets }}
+        - name: {{ $val }}
+        {{ end -}}
+      {{ end -}}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["-config", "/etc/config.yml"]
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.healtz.liveness.path }}
+              port: {{ .Values.healtz.port }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.healtz.liveness.initial_delay_seconds }}
+            periodSeconds: {{ .Values.healtz.liveness.period_seconds }}
+            failureThreshold: {{ .Values.healtz.liveness.failure_threshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.healtz.readiness.path }}
+              port: {{ .Values.healtz.port }}
+              scheme: HTTP
+            initialDelaySeconds: {{ .Values.healtz.readiness.initial_delay_seconds }}
+            periodSeconds: {{ .Values.healtz.readiness.period_seconds }}
+          ports:
+            - containerPort: {{ .Values.metrics.port }}
+            - containerPort: {{ .Values.profiling.port }}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: operator-config
+              mountPath: /etc/config.yml
+              subPath: config.yml
+              readOnly: true
+      volumes:
+        - name: operator-config
+          configMap:
+            defaultMode: 0644
+            name: {{ .Release.Name }}-config
