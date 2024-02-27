@@ -93,8 +93,8 @@ type MetricsConfig struct {
 }
 
 type PprofConfig struct {
-	EnableServerPprof bool `env:"enable"`
-	Port              int  `env:"port"`
+	EnableServerPprof bool `yaml:"enable"`
+	Port              int  `yaml:"port"`
 }
 
 type HealthConfig struct {

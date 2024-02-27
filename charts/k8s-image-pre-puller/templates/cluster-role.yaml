@@ -1,0 +1,80 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-role
+  labels:
+    app.kubernetes.io/component: k8s-image-pre-puller
+    app.kubernetes.io/version: "{{ .Values.image.tag }}"
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/status
+  verbs:
+  - get
+- apiGroups:
+  - apps
+  resources:
+  - daemonset
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - daemonset/status
+  verbs:
+  - get
+- apiGroups:
+  - images.cdayz.k8s.extensions
+  resources:
+  - prepullimages
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - images.cdayz.k8s.extensions
+  resources:
+  - prepullimages/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - images.cdayz.k8s.extensions
+  resources:
+  - prepullimages/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

@@ -1,0 +1,41 @@
+logger:
+  system: {{ .Values.logger.system }}
+  level: {{ .Values.logger.level }}
+
+metrics:
+  path: {{ .Values.metrics.path }}
+  port: {{ .Values.metrics.port }}
+
+pprof:
+  enable: {{ .Values.profiling.enabled }}
+  port: {{ .Values.profiling.port }}
+
+health:
+  port: {{ .Values.healtz.port }}
+  liveness_path: {{ .Values.healtz.liveness.path }}
+  readiness_path: {{ .Values.healtz.readiness.path }}
+
+leader_election:
+  instance_id: $POD_NAME
+  lock_name: "{{ .Release.Name }}-lock"
+  lock_namespace: {{ .Release.Namespace }}
+
+worker_count: {{ .Values.controllerThreads }}
+pre_pull_image_reconciller:
+  main_container:
+    name: {{ .Values.pre_pull_image_reconciller.main_container.name }}
+    image: {{ .Values.pre_pull_image_reconciller.main_container.image }}
+    command: {{ toYaml .Values.pre_pull_image_reconciller.main_container.command | nindent 6 }}
+    args: {{ toYaml .Values.pre_pull_image_reconciller.main_container.args | nindent 6 }}
+    resources:
+      limits: {{ toYaml .Values.pre_pull_image_reconciller.main_container.resources.limits | nindent 8 }}
+      requests: {{ toYaml .Values.pre_pull_image_reconciller.main_container.resources.requests | nindent 8 }}
+  pre_pull_container:
+    name: {{ .Values.pre_pull_image_reconciller.pre_pull_container.name }}
+    image: {{ .Values.pre_pull_image_reconciller.pre_pull_container.image }}
+    command: {{ toYaml .Values.pre_pull_image_reconciller.pre_pull_container.command | nindent 6 }}
+    args: {{ toYaml .Values.pre_pull_image_reconciller.pre_pull_container.args | nindent 6 }}
+    resources:
+      limits: {{ toYaml .Values.pre_pull_image_reconciller.pre_pull_container.resources.limits | nindent 8 }}
+      requests: {{ toYaml .Values.pre_pull_image_reconciller.pre_pull_container.resources.requests | nindent 8 }}
+  image_pull_secret_names: {{ toYaml .Values.imagePullSecrets | nindent 4 }}

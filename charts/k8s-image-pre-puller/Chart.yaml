@@ -1,0 +1,8 @@
+apiVersion: v2
+name: k8s-image-pre-puller
+description: A Helm chart for k8s-image-pre-puller operator
+version: 1.1.28
+home: https://github.com/Cdayz/k8s-image-pre-puller
+maintainers:
+  - name: cdayz
+    email: capitan.crazy.dayz@gmail.com
