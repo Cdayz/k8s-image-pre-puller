@@ -23,11 +23,32 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
-      - name: Release Helm Chart
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-          CR_RELEASE_NAME_TEMPLATE: "k8s-image-pre-puller-{{ .Version }}"
+      - name: Package and upload helm chart
+        run: |
+          # donwload helm chart releaser
+          curl -sSLo cr.tar.gz "https://github.com/helm/chart-releaser/releases/download/v1.2.1/chart-releaser_1.2.1_linux_amd64.tar.gz"
+          tar -xzf cr.tar.gz
+          rm -f cr.tar.gz
+          owner=$(cut -d '/' -f 1 <<< "$GITHUB_REPOSITORY")
+          repo=$(cut -d '/' -f 2 <<< "$GITHUB_REPOSITORY")
+          # package chart
+          ./cr package charts/$repo
+          # upload chart to github relases
+          ./cr upload \
+              --owner "$owner" \
+              --git-repo "$repo" \
+              --token "${{ secrets.GITHUB_TOKEN }}" \
+              --release-name-template "k8s-image-pre-puller-{{ .Version }}"
+          # update index and push to github pages
+          ./cr index \
+              --owner "$owner" \
+              --git-repo "$repo" \
+              --token "${{ secrets.GITHUB_TOKEN }}" \
+              --release-name-template "{{ .Version }}" \
+              --index-path ./index.yaml \
+              --charts-repo https://$owner.github.io/$repo \
+              --push
+
 
   release-docker-image:
     runs-on: ubuntu-latest
