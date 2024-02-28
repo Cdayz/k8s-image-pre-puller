@@ -1,0 +1,16 @@
+apiVersion: v1
+entries:
+  k8s-image-pre-puller:
+  - apiVersion: v2
+    created: "2024-02-28T19:07:17.273581511Z"
+    description: A Helm chart for k8s-image-pre-puller operator
+    digest: 29eb8f728a9593faec3bd0f073186423333d93be5ab395c6327a0381da744ccd
+    home: https://github.com/Cdayz/k8s-image-pre-puller
+    maintainers:
+    - email: capitan.crazy.dayz@gmail.com
+      name: cdayz
+    name: k8s-image-pre-puller
+    urls:
+    - https://Cdayz.github.io/k8s-image-pre-puller/k8s-image-pre-puller-0.1.0.tgz
+    version: 0.1.0
+generated: "2024-02-28T19:07:17.272974907Z"
