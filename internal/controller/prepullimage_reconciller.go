@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -30,6 +31,8 @@ const (
 
 	PodNamePrefix       = "image-pre-puller-"
 	DaemonSetNamePrefix = "image-pre-puller-"
+
+	BuiltinKubernetesTaintKeyPrefix = "node.kubernetes.io"
 )
 
 var MaxUnavailablePodsOfDaemonSetDuringRollingUpdate = intstr.FromString("100%")
@@ -342,6 +345,11 @@ func (r *prePullImageReconciller) getTolerationsByNodeSelector(ctx context.Conte
 	tolerationMap := map[string]corev1.Toleration{}
 	for _, item := range nodes.Items {
 		for _, taint := range item.Spec.Taints {
+			if strings.HasPrefix(taint.Key, BuiltinKubernetesTaintKeyPrefix) {
+				// WARN: we should avoid to add tolerations for builtin taints
+				continue
+			}
+
 			key := taint.ToString()
 
 			if _, ok := tolerationMap[key]; !ok {
