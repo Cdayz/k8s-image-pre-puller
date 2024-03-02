@@ -16,14 +16,29 @@ You can install this operator by installing it through [Helm Chart](./charts/k8s
 When operator installed in cluster you can simply create resources like this:
 
 ```yaml
-apiVersion: v1
+apiVersion: images.cdayz.k8s.extensions/v1
 kind: PrePullImage
 metadata:
   name: my-cool-image-pre-pull
   namespace: my-namespace
 spec:
   image: "gcr.io/my-cool-image"
-  nodeSelector: {} # You can specify selectors for pre-pull only on particular nodes
+```
+
+Or you can specify `nodeSelector` to pre-pull image only on particular nodes.
+
+```yaml
+apiVersion: images.cdayz.k8s.extensions/v1
+kind: PrePullImage
+metadata:
+  name: my-cool-image-pre-pull
+  namespace: my-namespace
+spec:
+  image: "gcr.io/my-cool-image"
+  nodeSelector:
+    ssd: "true"
+    feature.nvidia-runtime: "true"
+    ...
 ```
 
 This operator automatically will create a `DaemonSet` for create pre-pulling pods on every existing node.
