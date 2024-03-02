@@ -50,7 +50,6 @@ spec:
                 type: object
             required:
             - image
-            - nodeSelector
             type: object
           status:
             description: PrePullImageStatus defines the observed state of PrePullImage

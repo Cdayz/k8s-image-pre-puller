@@ -1,0 +1,48 @@
+logger:
+  system: k8s-image-pre-puller
+  level: info
+
+metrics:
+  path: /metrics
+  port: 9090
+
+pprof:
+  enable: true
+  port: 8085
+
+health:
+  port: 8080
+  liveness_path: /alive
+  readiness_path: /ready
+
+leader_election:
+  instance_id: k8s-image-pre-puller-local
+  lock_name: k8s-image-pre-puller-lock
+  lock_namespace: default
+
+worker_count: 10
+resync_period: 5m
+pre_pull_image_reconciller:
+  main_container:
+    name: main
+    image: busybox
+    command: ["/bin/sh"]
+    args: ["-c", "sleep inf"]
+    resources:
+      limits:
+        cpu: 25m
+        memory: 25Mi
+      requests:
+        cpu: 25m
+        memory: 25Mi
+  pre_pull_container:
+    command: ["/bin/sh"]
+    args: ["-c", "echo OK"]
+    resources:
+      limits:
+        cpu: 100m
+        memory: 256Mi
+      requests:
+        cpu: 25m
+        memory: 25Mi
+  image_pull_secret_names: []
