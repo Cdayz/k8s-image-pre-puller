@@ -12,10 +12,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/kubernetes"
 
 	"github.com/Cdayz/k8s-image-pre-puller/internal/controller/utils"
 	"github.com/Cdayz/k8s-image-pre-puller/internal/names"
 	imagesv1 "github.com/Cdayz/k8s-image-pre-puller/pkg/apis/images/v1"
+	imclientset "github.com/Cdayz/k8s-image-pre-puller/pkg/client/clientset/versioned"
 )
 
 const (
@@ -32,7 +34,13 @@ const (
 
 var MaxUnavailablePodsOfDaemonSetDuringRollingUpdate = intstr.FromString("100%")
 
-func (r *PrePullImageController) Reconcile(ctx context.Context, req ReconcileRequest) (ControllerResult, error) {
+type prePullImageReconciller struct {
+	reconcileConfig *PrePullImageReconcilerConfig
+	kubeClient      kubernetes.Interface
+	imClient        imclientset.Interface
+}
+
+func (r *prePullImageReconciller) Reconcile(ctx context.Context, req ReconcileRequest) (ControllerResult, error) {
 	prePullImage, err := r.imClient.ImagesV1().PrePullImages(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -72,7 +80,7 @@ func (r *PrePullImageController) Reconcile(ctx context.Context, req ReconcileReq
 	return ControllerResult{}, nil
 }
 
-func (r *PrePullImageController) removeFromPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) error {
+func (r *prePullImageReconciller) removeFromPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) error {
 	daemonSet, err := r.getCurrentPrePullingDaemonset(ctx, prePullImage)
 	if err != nil {
 		return fmt.Errorf("get current pre-pulling daemonset: %w", err)
@@ -81,15 +89,19 @@ func (r *PrePullImageController) removeFromPrePulling(ctx context.Context, prePu
 		return nil
 	}
 
-	if err := RemoveImageNameFromAnnotation(daemonSet, prePullImage.Name); err != nil {
+	imageNamesLookup, err := RemoveImageNameFromAnnotation(daemonSet, prePullImage.Spec.Image, prePullImage.Name)
+	if err != nil {
 		return fmt.Errorf("remove image names from daemonset annotations: %w", err)
 	}
 
 	daemonSet.Spec.Template.Annotations = daemonSet.Annotations // WARN: We should have same annotations on pod
-	daemonSet.Spec.Template.Spec.InitContainers = slices.DeleteFunc(
-		daemonSet.Spec.Template.Spec.InitContainers,
-		func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
-	)
+
+	if len(imageNamesLookup.InvertedIndex[prePullImage.Spec.Image]) == 0 {
+		daemonSet.Spec.Template.Spec.InitContainers = slices.DeleteFunc(
+			daemonSet.Spec.Template.Spec.InitContainers,
+			func(ctr corev1.Container) bool { return ctr.Image == prePullImage.Spec.Image },
+		)
+	}
 	if len(daemonSet.Spec.Template.Spec.InitContainers) > 0 {
 		_, err := r.kubeClient.AppsV1().DaemonSets(daemonSet.Namespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
 		if err != nil {
@@ -105,7 +117,7 @@ func (r *PrePullImageController) removeFromPrePulling(ctx context.Context, prePu
 	return nil
 }
 
-func (r *PrePullImageController) ensurePrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) error {
+func (r *prePullImageReconciller) ensurePrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) error {
 	daemonSet, err := r.getCurrentPrePullingDaemonset(ctx, prePullImage)
 	if err != nil {
 		return fmt.Errorf("get current pre-pulling daemonset: %w", err)
@@ -134,8 +146,8 @@ func (r *PrePullImageController) ensurePrePulling(ctx context.Context, prePullIm
 	return nil
 }
 
-func (r *PrePullImageController) getCurrentPrePullingDaemonset(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	daemonSet, err := r.kubeClient.AppsV1().DaemonSets(prePullImage.Namespace).Get(ctx, r.makeDaemonSetName(prePullImage), metav1.GetOptions{})
+func (r *prePullImageReconciller) getCurrentPrePullingDaemonset(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+	daemonSet, err := r.kubeClient.AppsV1().DaemonSets(prePullImage.Namespace).Get(ctx, makeDaemonSetName(prePullImage), metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
@@ -146,13 +158,16 @@ func (r *PrePullImageController) getCurrentPrePullingDaemonset(ctx context.Conte
 	return daemonSet, nil
 }
 
-func (r *PrePullImageController) createDaemonSetForPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+func (r *prePullImageReconciller) createDaemonSetForPrePulling(ctx context.Context, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
 	labels := map[string]string{
-		DaemonSetLabelNodeSelectorHash: r.nodeSelectorHash(prePullImage),
+		DaemonSetLabelNodeSelectorHash: nodeSelectorHash(prePullImage),
 		ControllerLabelPurposeName:     ControllerLabelPurposeValue,
 	}
 
-	annVal, err := MakeAnnotationValue([]string{prePullImage.Name})
+	annVal, err := MakeAnnotationValue(&ImageNamesLookup{
+		Index:         map[string]string{prePullImage.Name: prePullImage.Spec.Image},
+		InvertedIndex: map[string][]string{prePullImage.Spec.Image: {prePullImage.Name}},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("make index annotation: %w", err)
 	}
@@ -171,7 +186,7 @@ func (r *PrePullImageController) createDaemonSetForPrePulling(ctx context.Contex
 
 	daemonSet := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        r.makeDaemonSetName(prePullImage),
+			Name:        makeDaemonSetName(prePullImage),
 			Namespace:   prePullImage.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
@@ -209,39 +224,25 @@ func (r *PrePullImageController) createDaemonSetForPrePulling(ctx context.Contex
 	return daemonSet, nil
 }
 
-func (r *PrePullImageController) ensurePrePullContainerInDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
-	prePullContainerName := r.makePrePullContainerName(prePullImage)
+func (r *prePullImageReconciller) ensurePrePullContainerInDaemonSet(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+	containerIndexInSpec := slices.IndexFunc(daemonSet.Spec.Template.Spec.InitContainers, func(ctr corev1.Container) bool {
+		return ctr.Image == prePullImage.Spec.Image
+	})
+	declaredInSpec := containerIndexInSpec != -1
 
-	var (
-		declaredInSpec   bool
-		specHasSameImage bool
-	)
-	for _, ctr := range daemonSet.Spec.Template.Spec.InitContainers {
-		if ctr.Name == prePullContainerName {
-			declaredInSpec = true
-			specHasSameImage = ctr.Image == prePullImage.Spec.Image
-			break
-		}
-	}
-
-	addedToAnnotation, err := AddImageNameToAnnotation(daemonSet, prePullImage.Name)
+	addedToAnnotation, err := AddImageNameToAnnotation(daemonSet, prePullImage.Spec.Image, prePullImage.Name)
 	if err != nil {
 		return nil, fmt.Errorf("add image-name to daemonset annotation: %w", err)
 	}
 
-	if declaredInSpec && specHasSameImage && !addedToAnnotation {
+	if declaredInSpec && !addedToAnnotation {
 		return daemonSet, nil
 	}
 
 	daemonSet.Spec.Template.Annotations = daemonSet.Annotations // WARN: We should have same annotations on pod
 
-	indexInSpec := slices.IndexFunc(daemonSet.Spec.Template.Spec.InitContainers, func(ctr corev1.Container) bool {
-		return ctr.Name == prePullContainerName
-	})
-	if indexInSpec == -1 {
+	if containerIndexInSpec == -1 {
 		daemonSet.Spec.Template.Spec.InitContainers = append(daemonSet.Spec.Template.Spec.InitContainers, r.createPrePullContainer(prePullImage))
-	} else {
-		daemonSet.Spec.Template.Spec.InitContainers[indexInSpec].Image = prePullImage.Spec.Image
 	}
 
 	daemonSet, err = r.kubeClient.AppsV1().DaemonSets(daemonSet.Namespace).Update(ctx, daemonSet, metav1.UpdateOptions{})
@@ -252,15 +253,15 @@ func (r *PrePullImageController) ensurePrePullContainerInDaemonSet(ctx context.C
 	return daemonSet, nil
 }
 
-func (r *PrePullImageController) ensureDaemonsetPrepullOnlyImagesFromAnnotation(ctx context.Context, daemonSet *appsv1.DaemonSet) (*appsv1.DaemonSet, error) {
+func (r *prePullImageReconciller) ensureDaemonsetPrepullOnlyImagesFromAnnotation(ctx context.Context, daemonSet *appsv1.DaemonSet) (*appsv1.DaemonSet, error) {
 	imageNames, err := GetImageNamesFromAnnotation(daemonSet)
 	if err != nil {
 		return nil, fmt.Errorf("get image names from daemonset annotation: %w", err)
 	}
 
 	prePullContainerNames := map[string]bool{}
-	for _, name := range imageNames {
-		prePullContainerNames[r.makePrePullContainerNameFromString(name)] = true
+	for imageName := range imageNames.InvertedIndex {
+		prePullContainerNames[makePrePullContainerNameFromString(imageName)] = true
 	}
 
 	initContainers := []corev1.Container{}
@@ -287,7 +288,7 @@ func (r *PrePullImageController) ensureDaemonsetPrepullOnlyImagesFromAnnotation(
 	return daemonSet, nil
 }
 
-func (r *PrePullImageController) ensureDaemonsetHasProperTolerations(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
+func (r *prePullImageReconciller) ensureDaemonsetHasProperTolerations(ctx context.Context, daemonSet *appsv1.DaemonSet, prePullImage *imagesv1.PrePullImage) (*appsv1.DaemonSet, error) {
 	requiredTolerations, err := r.getTolerationsByNodeSelector(ctx, prePullImage.Spec.NodeSelector)
 	if err != nil {
 		return nil, fmt.Errorf("list tolerations by node selector: %w", err)
@@ -330,7 +331,7 @@ func (r *PrePullImageController) ensureDaemonsetHasProperTolerations(ctx context
 	return daemonSet, nil
 }
 
-func (r *PrePullImageController) getTolerationsByNodeSelector(ctx context.Context, nodeSelector map[string]string) ([]corev1.Toleration, error) {
+func (r *prePullImageReconciller) getTolerationsByNodeSelector(ctx context.Context, nodeSelector map[string]string) ([]corev1.Toleration, error) {
 	nodes, err := r.kubeClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(nodeSelector)).String(),
 	})
@@ -366,9 +367,9 @@ func (r *PrePullImageController) getTolerationsByNodeSelector(ctx context.Contex
 	return tolerations, nil
 }
 
-func (r *PrePullImageController) createPrePullContainer(prePullImage *imagesv1.PrePullImage) corev1.Container {
+func (r *prePullImageReconciller) createPrePullContainer(prePullImage *imagesv1.PrePullImage) corev1.Container {
 	return corev1.Container{
-		Name:      r.makePrePullContainerName(prePullImage),
+		Name:      makePrePullContainerNameFromString(prePullImage.Spec.Image),
 		Image:     prePullImage.Spec.Image,
 		Command:   r.reconcileConfig.PrePullContainer.Command,
 		Args:      r.reconcileConfig.PrePullContainer.Args,
@@ -376,7 +377,7 @@ func (r *PrePullImageController) createPrePullContainer(prePullImage *imagesv1.P
 	}
 }
 
-func (r *PrePullImageController) createMainContainer() corev1.Container {
+func (r *prePullImageReconciller) createMainContainer() corev1.Container {
 	return corev1.Container{
 		Name:      r.reconcileConfig.MainContainer.Name,
 		Image:     r.reconcileConfig.MainContainer.Image,
@@ -386,20 +387,16 @@ func (r *PrePullImageController) createMainContainer() corev1.Container {
 	}
 }
 
-func (r *PrePullImageController) makePrePullContainerName(prePullImage *imagesv1.PrePullImage) string {
-	return r.makePrePullContainerNameFromString(prePullImage.Name)
-}
-
-func (r *PrePullImageController) makePrePullContainerNameFromString(name string) string {
+func makePrePullContainerNameFromString(name string) string {
 	imageHashStr := names.StringHash(name)
 	return fmt.Sprintf("pre-pull-%d", imageHashStr)
 }
 
-func (r *PrePullImageController) nodeSelectorHash(prePullImage *imagesv1.PrePullImage) string {
+func nodeSelectorHash(prePullImage *imagesv1.PrePullImage) string {
 	return strconv.FormatUint(uint64(names.StringMapHash(prePullImage.Spec.NodeSelector)), 10)
 }
 
-func (r *PrePullImageController) makeDaemonSetName(prePullImage *imagesv1.PrePullImage) string {
-	nodeSelectorHashStr := r.nodeSelectorHash(prePullImage)
+func makeDaemonSetName(prePullImage *imagesv1.PrePullImage) string {
+	nodeSelectorHashStr := nodeSelectorHash(prePullImage)
 	return names.MakeK8SName([]string{DaemonSetNamePrefix, nodeSelectorHashStr}, names.IncludeCRC(true), names.MaxLength(63))
 }

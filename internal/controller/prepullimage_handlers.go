@@ -69,8 +69,8 @@ func (cc *PrePullImageController) addPod(obj interface{}) {
 		return
 	}
 
-	for _, imageName := range names {
-		name := ReconcileRequest{Namespace: pod.Namespace, Name: imageName, PodName: &pod.Name}
+	for name := range names.Index {
+		name := ReconcileRequest{Namespace: pod.Namespace, Name: name, PodName: &pod.Name}
 		queue := cc.getWorkerQueue(name.Key())
 		queue.Add(name)
 	}
@@ -105,8 +105,8 @@ func (cc *PrePullImageController) updatePod(oldObj, newObj interface{}) {
 		return
 	}
 
-	for _, imageName := range names {
-		name := ReconcileRequest{Namespace: newPod.Namespace, Name: imageName, PodName: &newPod.Name}
+	for name := range names.Index {
+		name := ReconcileRequest{Namespace: newPod.Namespace, Name: name, PodName: &newPod.Name}
 		queue := cc.getWorkerQueue(name.Key())
 		queue.Add(name)
 	}
@@ -138,8 +138,8 @@ func (cc *PrePullImageController) deletePod(obj interface{}) {
 		return
 	}
 
-	for _, imageName := range names {
-		name := ReconcileRequest{Namespace: pod.Namespace, Name: imageName, PodName: &pod.Name}
+	for name := range names.Index {
+		name := ReconcileRequest{Namespace: pod.Namespace, Name: name, PodName: &pod.Name}
 		queue := cc.getWorkerQueue(name.Key())
 		queue.Add(name)
 	}

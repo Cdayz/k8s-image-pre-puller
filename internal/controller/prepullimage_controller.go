@@ -23,8 +23,6 @@ import (
 )
 
 type PrePullImageController struct {
-	reconcileConfig *PrePullImageReconcilerConfig
-
 	kubeClient kubernetes.Interface
 	imClient   imclientset.Interface
 
@@ -39,6 +37,8 @@ type PrePullImageController struct {
 
 	workers   uint32
 	queueList []workqueue.RateLimitingInterface
+
+	reconciller prePullImageReconciller
 }
 
 func NewPrePullImageController(
@@ -61,8 +61,6 @@ func NewPrePullImageController(
 	podLister := podInformer.Lister()
 
 	cc := PrePullImageController{
-		reconcileConfig: reconcileConfig,
-
 		kubeClient: kubeClient,
 		imClient:   imClient,
 
@@ -77,6 +75,12 @@ func NewPrePullImageController(
 
 		workers:   workers,
 		queueList: queueList,
+
+		reconciller: prePullImageReconciller{
+			reconcileConfig: reconcileConfig,
+			kubeClient:      kubeClient,
+			imClient:        imClient,
+		},
 	}
 
 	_, _ = cc.prePullImageInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -173,7 +177,7 @@ func (cc *PrePullImageController) processNextReq(ctx context.Context, count uint
 	queue := cc.queueList[count]
 	obj, shutdown := queue.Get()
 	if shutdown {
-		klog.Errorf("Fail to pop item from queue")
+		klog.Errorf("fail to pop item from queue")
 		return false
 	}
 
@@ -190,11 +194,18 @@ func (cc *PrePullImageController) processNextReq(ctx context.Context, count uint
 
 	klog.V(3).Infof("try to handle request <%v>", req)
 
-	_, err := cc.Reconcile(ctx, req)
+	res, err := cc.reconciller.Reconcile(ctx, req)
 	if err != nil {
-		klog.V(2).Infof("Failed to handle PrePullImage<%s/%s>: %v", req.Namespace, req.Name, err)
+		klog.V(2).Infof("failed to handle PrePullImage<%s/%s>: %v", req.Namespace, req.Name, err)
 		// If any error, requeue it.
 		queue.AddRateLimited(req)
+		return true
+	} else if res.Requeue {
+		if res.RequeueAfter != 0 {
+			queue.AddAfter(req, res.RequeueAfter)
+		} else {
+			queue.AddRateLimited(req)
+		}
 		return true
 	}
 
