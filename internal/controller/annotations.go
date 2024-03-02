@@ -10,47 +10,78 @@ import (
 
 const ControllerAnnotationImageNames = "cdayz.k8s.extensions/image-names"
 
-func GetImageNamesFromAnnotation(obj metav1.Object) ([]string, error) {
-	var imageNames []string
+type (
+	ImageName                = string
+	PrePullImageResourceName = string
+	ImageNamesLookup         struct {
+		Index         map[PrePullImageResourceName]ImageName   `json:"index"`
+		InvertedIndex map[ImageName][]PrePullImageResourceName `json:"invIndex"`
+	}
+)
+
+func GetImageNamesFromAnnotation(obj metav1.Object) (*ImageNamesLookup, error) {
+	var imageNames ImageNamesLookup
 	if imageNamesListStr, ok := obj.GetAnnotations()[ControllerAnnotationImageNames]; ok {
 		if err := json.Unmarshal([]byte(imageNamesListStr), &imageNames); err != nil {
 			return nil, fmt.Errorf("unmarshal image-names annotation: %w", err)
 		}
 	}
-	return imageNames, nil
+	return &imageNames, nil
 }
 
-func RemoveImageNameFromAnnotation(obj metav1.Object, name string) error {
+func RemoveImageNameFromAnnotation(obj metav1.Object, imageName, objectName string) (*ImageNamesLookup, error) {
 	imageNames, err := GetImageNamesFromAnnotation(obj)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	imageNames = slices.DeleteFunc(imageNames, func(s string) bool { return s == name })
+	oldImageName, existsInIndex := imageNames.Index[objectName]
+	_, exitstInInvIndex := imageNames.InvertedIndex[oldImageName]
+
+	if !existsInIndex && !exitstInInvIndex {
+		return imageNames, nil
+	}
+
+	delete(imageNames.Index, objectName)
+	imageNames.InvertedIndex[imageName] = slices.DeleteFunc(imageNames.InvertedIndex[imageName], func(s string) bool { return s == objectName })
+	if len(imageNames.InvertedIndex[imageName]) == 0 {
+		delete(imageNames.InvertedIndex, imageName)
+	}
+	imageNames.InvertedIndex[oldImageName] = slices.DeleteFunc(imageNames.InvertedIndex[oldImageName], func(s string) bool { return s == objectName })
+	if len(imageNames.InvertedIndex[oldImageName]) == 0 {
+		delete(imageNames.InvertedIndex, oldImageName)
+	}
 
 	val, err := MakeAnnotationValue(imageNames)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ann := obj.GetAnnotations()
 	ann[ControllerAnnotationImageNames] = val
 	obj.SetAnnotations(ann)
 
-	return nil
+	return imageNames, nil
 }
 
-func AddImageNameToAnnotation(obj metav1.Object, name string) (added bool, err error) {
+func AddImageNameToAnnotation(obj metav1.Object, imageName, objectName string) (added bool, err error) {
 	imageNames, err := GetImageNamesFromAnnotation(obj)
 	if err != nil {
 		return false, err
 	}
 
-	if slices.Contains(imageNames, name) {
+	oldImageName, existInIndex := imageNames.Index[objectName]
+	if existInIndex && oldImageName == imageName && slices.Contains(imageNames.InvertedIndex[imageName], objectName) {
 		return false, nil
 	}
 
-	imageNames = append(imageNames, name)
+	imageNames.Index[objectName] = imageName
+	imageNames.InvertedIndex[oldImageName] = slices.DeleteFunc(imageNames.InvertedIndex[oldImageName], func(s string) bool { return s == objectName })
+	if len(imageNames.InvertedIndex[oldImageName]) == 0 {
+		delete(imageNames.InvertedIndex, oldImageName)
+	}
+
+	imageNames.InvertedIndex[imageName] = append(imageNames.InvertedIndex[imageName], objectName)
 	val, err := MakeAnnotationValue(imageNames)
 	if err != nil {
 		return false, err
@@ -63,7 +94,7 @@ func AddImageNameToAnnotation(obj metav1.Object, name string) (added bool, err e
 	return true, nil
 }
 
-func MakeAnnotationValue(imageNames []string) (string, error) {
+func MakeAnnotationValue(imageNames *ImageNamesLookup) (string, error) {
 	imageNamesListBytes, err := json.Marshal(imageNames)
 	if err != nil {
 		return "", fmt.Errorf("marshal image-name annotation: %w", err)
