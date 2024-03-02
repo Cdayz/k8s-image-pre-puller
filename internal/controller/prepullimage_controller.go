@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/client-go/informers"
-	coreinformers "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
-	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -26,12 +23,7 @@ type PrePullImageController struct {
 	kubeClient kubernetes.Interface
 	imClient   imclientset.Interface
 
-	informerFactory   informers.SharedInformerFactory
-	imInformerFactory iminformers.SharedInformerFactory
-
-	podInformer coreinformers.PodInformer
-	podLister   corelisters.PodLister
-
+	imInformerFactory    iminformers.SharedInformerFactory
 	prePullImageInformer imageinformer.PrePullImageInformer
 	prePullImageLister   imagelister.PrePullImageLister
 
@@ -44,34 +36,27 @@ type PrePullImageController struct {
 func NewPrePullImageController(
 	kubeClient kubernetes.Interface,
 	imClient imclientset.Interface,
-	informerFactory informers.SharedInformerFactory,
+	resyncPeriod time.Duration,
 	workers uint32,
 	reconcileConfig *PrePullImageReconcilerConfig,
 ) *PrePullImageController {
 	queueList := make([]workqueue.RateLimitingInterface, workers)
 	for i := uint32(0); i < workers; i++ {
-		queueList[i] = workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter())
+		queueList[i] = workqueue.NewRateLimitingQueue(workqueue.NewItemExponentialFailureRateLimiter(5*time.Millisecond, 300*time.Second))
 	}
 
-	factory := iminformers.NewSharedInformerFactory(imClient, 0)
+	factory := iminformers.NewSharedInformerFactory(imClient, resyncPeriod)
 	prePullImageInformer := factory.Images().V1().PrePullImages()
 	prePullImageLister := prePullImageInformer.Lister()
-
-	podInformer := informerFactory.Core().V1().Pods()
-	podLister := podInformer.Lister()
 
 	cc := PrePullImageController{
 		kubeClient: kubeClient,
 		imClient:   imClient,
 
-		informerFactory:   informerFactory,
 		imInformerFactory: factory,
 
 		prePullImageInformer: prePullImageInformer,
 		prePullImageLister:   prePullImageLister,
-
-		podInformer: podInformer,
-		podLister:   podLister,
 
 		workers:   workers,
 		queueList: queueList,
@@ -86,11 +71,7 @@ func NewPrePullImageController(
 	_, _ = cc.prePullImageInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    cc.addPrePullImage,
 		UpdateFunc: cc.updatePrePullImage,
-	})
-	_, _ = podInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    cc.addPod,
-		UpdateFunc: cc.updatePod,
-		DeleteFunc: cc.deletePod,
+		DeleteFunc: cc.deletePrePullImage,
 	})
 
 	return &cc
@@ -98,15 +79,7 @@ func NewPrePullImageController(
 
 // Run start PrePullImageController.
 func (cc *PrePullImageController) Run(ctx context.Context) {
-	cc.informerFactory.Start(ctx.Done())
 	cc.imInformerFactory.Start(ctx.Done())
-
-	for informerType, ok := range cc.informerFactory.WaitForCacheSync(ctx.Done()) {
-		if !ok {
-			klog.Errorf("caches failed to sync: %v", informerType)
-			return
-		}
-	}
 
 	for informerType, ok := range cc.imInformerFactory.WaitForCacheSync(ctx.Done()) {
 		if !ok {

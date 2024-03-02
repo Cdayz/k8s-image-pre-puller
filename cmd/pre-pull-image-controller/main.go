@@ -17,7 +17,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -121,7 +120,7 @@ func main() {
 	prePullImageController := controller.NewPrePullImageController(
 		k8sClient,
 		imClient,
-		informers.NewSharedInformerFactory(k8sClient, 0),
+		controllerCfg.ResyncPeriod,
 		controllerCfg.WorkersCount,
 		prePullImageControllerConfig,
 	)
