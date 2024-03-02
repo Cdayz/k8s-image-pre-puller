@@ -39,6 +39,7 @@ profiling:
   port: 6060
 
 controllerThreads: 10
+resyncPeriod: 5m
 pre_pull_image_reconciller:
   main_container:
     name: main

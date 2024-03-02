@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
@@ -115,6 +116,7 @@ type Config struct {
 	Pprof                        PprofConfig                  `yaml:"pprof"`
 	Health                       HealthConfig                 `yaml:"health"`
 	LeaderElectionConfig         LeaderElectionConfig         `yaml:"leader_election"`
+	ResyncPeriod                 time.Duration                `yaml:"resync_period"`
 	WorkersCount                 uint32                       `yaml:"worker_count"`
 	PrePullImageReconcilerConfig PrePullImageReconcilerConfig `yaml:"pre_pull_image_reconciller"`
 }

@@ -21,6 +21,7 @@ leader_election:
   lock_namespace: {{ .Release.Namespace }}
 
 worker_count: {{ .Values.controllerThreads }}
+resync_period: {{ .Values.resyncPeriod }}
 pre_pull_image_reconciller:
   main_container:
     name: {{ .Values.pre_pull_image_reconciller.main_container.name }}
