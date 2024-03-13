@@ -25,7 +25,7 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - daemonset
+  - daemonsets
   verbs:
   - create
   - delete
@@ -37,7 +37,7 @@ rules:
 - apiGroups:
   - apps
   resources:
-  - daemonset/status
+  - daemonsets/status
   verbs:
   - get
 - apiGroups:

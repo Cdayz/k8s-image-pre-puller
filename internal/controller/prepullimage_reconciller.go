@@ -343,8 +343,8 @@ func (r *prePullImageReconciller) getTolerationsByNodeSelector(ctx context.Conte
 	}
 
 	tolerationMap := map[string]corev1.Toleration{}
-	for _, item := range nodes.Items {
-		for _, taint := range item.Spec.Taints {
+	for _, node := range nodes.Items {
+		for _, taint := range node.Spec.Taints {
 			if strings.HasPrefix(taint.Key, BuiltinKubernetesTaintKeyPrefix) {
 				// WARN: we should avoid to add tolerations for builtin taints
 				continue
